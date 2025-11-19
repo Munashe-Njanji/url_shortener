@@ -27,6 +27,7 @@ This implementation plan breaks down the transformation into discrete, increment
 
 
 
+
   - [ ] 2.1 Create PostgreSQL database schema with all tables
     - Create users, organizations, organization_members, api_keys tables
     - Create domains, links, subscriptions, usage_records tables
@@ -38,6 +39,7 @@ This implementation plan breaks down the transformation into discrete, increment
     - Create migration script to transfer existing links
     - Preserve existing slugs for backward compatibility
     - Update database connection configuration
+
     - _Requirements: 9.1, 9.6_
     - _Commit: "feat: migrate from SQLite to PostgreSQL"_
   

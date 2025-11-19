@@ -56,7 +56,14 @@ class Settings(BaseSettings):
     REMOVE_TRACKING_PARAMS: bool = False
     
     # CORS
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
+    
+    @property
+    def cors_origins_list(self) -> list:
+        """Parse CORS_ORIGINS string into list."""
+        if isinstance(self.CORS_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(',')]
+        return self.CORS_ORIGINS
     
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"

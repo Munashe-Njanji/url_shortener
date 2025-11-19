@@ -1,6 +1,7 @@
 """
 CRUD operations for URL shortener.
 Uses secure slug generation and proper validation.
+Includes Redis caching for performance.
 """
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +11,10 @@ import models
 import hashing
 from url_validator import validate_url, normalize_url, get_url_hash
 from config import settings
+from redis_client import cache_get, cache_set, cache_delete, link_cache_key
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def create_short_url(
@@ -131,17 +136,46 @@ def create_short_url(
         raise ValueError(f"Database error: {str(e)}")
 
 
-def get_url_by_short(db: Session, short_url: str) -> Optional[models.URL]:
+def get_url_by_short(db: Session, short_url: str, use_cache: bool = True) -> Optional[models.URL]:
     """
-    Get URL by short slug, checking expiration and active status.
+    Get URL by short slug with Redis caching.
     
     Args:
         db: Database session
         short_url: The short slug to look up
+        use_cache: Whether to use Redis cache (default: True)
         
     Returns:
         URL model instance if found and valid, None otherwise
     """
+    # Try cache first
+    if use_cache:
+        cache_key = link_cache_key(short_url)
+        cached_data = cache_get(cache_key)
+        
+        if cached_data:
+            logger.debug(f"Cache HIT for {short_url}")
+            # Reconstruct URL object from cached data
+            url = models.URL()
+            for key, value in cached_data.items():
+                if key == 'expiration_date' and value:
+                    value = datetime.fromisoformat(value)
+                elif key == 'created_at' and value:
+                    value = datetime.fromisoformat(value)
+                elif key == 'updated_at' and value:
+                    value = datetime.fromisoformat(value)
+                setattr(url, key, value)
+            
+            # Check if expired
+            if url.expiration_date and url.expiration_date < datetime.utcnow():
+                cache_delete(cache_key)
+                return None
+            
+            return url
+        
+        logger.debug(f"Cache MISS for {short_url}")
+    
+    # Cache miss or cache disabled - query database
     url = db.query(models.URL).filter(
         models.URL.short_url == short_url,
         models.URL.active == True
@@ -153,6 +187,21 @@ def get_url_by_short(db: Session, short_url: str) -> Optional[models.URL]:
     # Check if expired
     if url.expiration_date and url.expiration_date < datetime.utcnow():
         return None
+    
+    # Cache the result
+    if use_cache:
+        cache_data = {
+            'id': url.id,
+            'target_url': url.target_url,
+            'short_url': url.short_url,
+            'url_hash': url.url_hash,
+            'clicks': url.clicks,
+            'active': url.active,
+            'expiration_date': url.expiration_date.isoformat() if url.expiration_date else None,
+            'created_at': url.created_at.isoformat() if url.created_at else None,
+            'updated_at': url.updated_at.isoformat() if url.updated_at else None
+        }
+        cache_set(link_cache_key(short_url), cache_data)
     
     return url
 
@@ -182,7 +231,7 @@ def update_url(
     active: Optional[bool] = None
 ) -> Optional[models.URL]:
     """
-    Update an existing URL.
+    Update an existing URL and invalidate cache.
     
     Args:
         db: Database session
@@ -219,12 +268,17 @@ def update_url(
     url.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(url)
+    
+    # Invalidate cache
+    cache_delete(link_cache_key(url.short_url))
+    logger.info(f"Cache invalidated for {url.short_url}")
+    
     return url
 
 
 def delete_url(db: Session, url_id: int) -> bool:
     """
-    Soft delete a URL by marking it as inactive.
+    Soft delete a URL by marking it as inactive and invalidate cache.
     
     Args:
         db: Database session
@@ -240,4 +294,9 @@ def delete_url(db: Session, url_id: int) -> bool:
     url.active = False
     url.updated_at = datetime.utcnow()
     db.commit()
+    
+    # Invalidate cache
+    cache_delete(link_cache_key(url.short_url))
+    logger.info(f"Cache invalidated for deleted link {url.short_url}")
+    
     return True

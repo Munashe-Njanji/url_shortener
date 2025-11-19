@@ -10,12 +10,15 @@ from sqlalchemy import text
 from typing import Optional
 import logging
 import uuid
+import time
 
 import models
 import crud
 import database
 import schemas
 from config import settings
+from rate_limiter import check_rate_limit_ip
+from redis_client import get_redis_client
 
 # Configure logging
 logging.basicConfig(
@@ -40,7 +43,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
@@ -108,7 +111,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def health_check(db: Session = Depends(database.get_db)):
     """
     Health check endpoint for monitoring.
-    Checks database connectivity and returns system status.
+    Checks database, Redis connectivity and returns system status.
     """
     checks = {}
     
@@ -119,6 +122,18 @@ async def health_check(db: Session = Depends(database.get_db)):
     except Exception as e:
         logger.error(f"Database health check failed: {str(e)}")
         checks["database"] = False
+    
+    # Check Redis
+    try:
+        redis = get_redis_client()
+        if redis:
+            redis.ping()
+            checks["redis"] = True
+        else:
+            checks["redis"] = False
+    except Exception as e:
+        logger.error(f"Redis health check failed: {str(e)}")
+        checks["redis"] = False
     
     # Overall status
     all_healthy = all(checks.values())
@@ -189,21 +204,42 @@ async def shorten_url(
     responses={
         302: {"description": "Redirect to target URL"},
         404: {"description": "Link not found"},
-        410: {"description": "Link expired or deleted"}
+        410: {"description": "Link expired or deleted"},
+        429: {"description": "Rate limit exceeded"}
     }
 )
 async def redirect_to_target(
     short_url: str,
+    request: Request,
     db: Session = Depends(database.get_db)
 ):
     """
     Redirect to the target URL for a given short link.
     
     This endpoint is optimized for performance:
-    - Fast database lookup with indexes
+    - Redis caching for fast lookups
+    - Rate limiting per IP
     - Minimal processing on redirect path
     - Click tracking happens asynchronously (future enhancement)
     """
+    # Get client IP
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check rate limit
+    allowed, remaining, reset_time = check_rate_limit_ip(client_ip)
+    if not allowed:
+        logger.warning(f"Rate limit exceeded for IP {client_ip}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Please try again later.",
+            headers={
+                "X-RateLimit-Limit": str(settings.RATE_LIMIT_REDIRECT_PER_MINUTE),
+                "X-RateLimit-Remaining": str(remaining),
+                "X-RateLimit-Reset": str(reset_time),
+                "Retry-After": str(max(0, reset_time - int(time.time())))
+            }
+        )
+    
     # Validate slug format to prevent injection
     if not short_url or len(short_url) > 30:
         raise HTTPException(
@@ -211,8 +247,8 @@ async def redirect_to_target(
             detail="Invalid short URL format"
         )
     
-    # Get URL from database
-    db_url = crud.get_url_by_short(db, short_url)
+    # Get URL from cache/database
+    db_url = crud.get_url_by_short(db, short_url, use_cache=True)
     
     if db_url is None:
         logger.info(f"Short URL not found or expired: {short_url}")
@@ -230,11 +266,16 @@ async def redirect_to_target(
     
     logger.info(f"Redirecting {short_url} -> {db_url.target_url}")
     
-    # Return redirect response
-    return RedirectResponse(
+    # Return redirect response with rate limit headers
+    response = RedirectResponse(
         url=str(db_url.target_url),
         status_code=status.HTTP_302_FOUND
     )
+    response.headers["X-RateLimit-Limit"] = str(settings.RATE_LIMIT_REDIRECT_PER_MINUTE)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_time)
+    
+    return response
 
 
 @app.get(
