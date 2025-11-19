@@ -6,6 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import Optional
 import logging
 import uuid
@@ -113,7 +114,7 @@ async def health_check(db: Session = Depends(database.get_db)):
     
     # Check database
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         checks["database"] = True
     except Exception as e:
         logger.error(f"Database health check failed: {str(e)}")

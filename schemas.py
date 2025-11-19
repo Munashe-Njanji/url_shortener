@@ -85,11 +85,16 @@ class URLResponse(BaseModel):
     id: int
     target_url: str
     short_url: str
-    slug: str
+    slug: Optional[str] = None
     clicks: int
     expiration_date: Optional[datetime]
     created_at: datetime
     active: bool
+    
+    @validator('slug', always=True)
+    def set_slug(cls, v, values):
+        """Set slug to match short_url for backward compatibility."""
+        return v or values.get('short_url')
     
     class Config:
         from_attributes = True
