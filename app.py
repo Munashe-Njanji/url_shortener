@@ -296,6 +296,73 @@ async def login(
     }
 
 
+@app.post(
+    "/api/v1/auth/refresh",
+    response_model=schemas.TokenResponse,
+    tags=["Authentication"],
+    summary="Refresh access token"
+)
+async def refresh_token(
+    refresh_data: schemas.RefreshTokenRequest,
+    db: Session = Depends(database.get_db)
+):
+    """
+    Refresh access token using refresh token.
+    
+    Returns new access and refresh tokens.
+    """
+    try:
+        # Verify refresh token
+        payload = verify_token(refresh_data.refresh_token)
+        
+        # Check if it's a refresh token
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+        
+        # Get user
+        user_id = int(payload.get("sub"))
+        user = auth_crud.get_user_by_id(db, user_id)
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+        
+        # Check if account is locked
+        if auth_crud.is_user_account_locked(db, user.id):
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Account is locked"
+            )
+        
+        # Create new tokens
+        access_token = create_access_token(data={"sub": str(user.id)})
+        new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        
+        logger.info(f"Token refreshed for user: {user.email} (ID: {user.id})")
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "user": user
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Token refresh error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate refresh token"
+        )
+
+
 @app.get(
     "/api/v1/auth/me",
     response_model=schemas.UserResponse,

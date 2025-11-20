@@ -193,3 +193,6 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserResponse
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., description="JWT refresh token")
