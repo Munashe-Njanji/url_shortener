@@ -93,6 +93,9 @@ def migrate_data():
                     continue
                 
                 # Insert into links table
+                # Convert SQLite boolean (0/1) to PostgreSQL boolean
+                active_bool = bool(url.active) if url.active is not None else True
+                
                 postgres_session.execute(text("""
                     INSERT INTO links (
                         slug, target_url, url_hash, clicks, active,
@@ -108,7 +111,7 @@ def migrate_data():
                     "target_url": url.target_url,
                     "url_hash": url.url_hash,
                     "clicks": url.clicks,
-                    "active": url.active,
+                    "active": active_bool,
                     "expires_at": url.expiration_date,
                     "created_at": url.created_at or datetime.utcnow(),
                     "updated_at": url.updated_at or datetime.utcnow()

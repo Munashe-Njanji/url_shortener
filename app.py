@@ -182,7 +182,7 @@ async def shorten_url(
             db,
             target_url=url_data.target_url,
             custom_slug=url_data.custom_slug,
-            expiration_date=url_data.expiration_date
+            expires_at=url_data.expiration_date
         )
         
         logger.info(f"Created short link: {db_url.short_url} -> {db_url.target_url}")
@@ -330,7 +330,7 @@ async def update_link(
             db,
             url_id=db_url.id,
             target_url=update_data.target_url,
-            expiration_date=update_data.expiration_date,
+            expires_at=update_data.expiration_date,
             active=update_data.active
         )
         

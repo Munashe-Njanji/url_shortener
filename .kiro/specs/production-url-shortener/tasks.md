@@ -23,27 +23,31 @@ This implementation plan breaks down the transformation into discrete, increment
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
   - _Commit: "feat: implement security hardening and SSRF prevention"_
 
-- [-] 2. Database Migration and Infrastructure Setup
+- [x] 2. Database Migration and Infrastructure Setup
 
 
 
 
-  - [ ] 2.1 Create PostgreSQL database schema with all tables
+  - [x] 2.1 Create PostgreSQL database schema with all tables
+
     - Create users, organizations, organization_members, api_keys tables
     - Create domains, links, subscriptions, usage_records tables
     - Add all indexes for performance optimization
     - _Requirements: 9.1, 9.2, 9.3_
     - _Commit: "feat: add PostgreSQL schema with organizations and domains"_
   
-  - [ ] 2.2 Implement database migration from SQLite to PostgreSQL
+  - [x] 2.2 Implement database migration from SQLite to PostgreSQL
+
+
     - Create migration script to transfer existing links
     - Preserve existing slugs for backward compatibility
     - Update database connection configuration
 
     - _Requirements: 9.1, 9.6_
     - _Commit: "feat: migrate from SQLite to PostgreSQL"_
+
   
-  - [ ] 2.3 Set up Redis for caching and rate limiting
+  - [x] 2.3 Set up Redis for caching and rate limiting
     - Configure Redis connection with connection pooling
     - Implement cache helper functions (get, set, delete, invalidate)
     - Create Redis key naming conventions

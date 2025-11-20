@@ -21,7 +21,7 @@ def create_short_url(
     db: Session,
     target_url: str,
     custom_slug: Optional[str] = None,
-    expiration_date: Optional[datetime] = None,
+    expires_at: Optional[datetime] = None,
     max_retries: int = 3
 ) -> models.URL:
     """
@@ -31,7 +31,7 @@ def create_short_url(
         db: Database session
         target_url: The long URL to shorten
         custom_slug: Optional custom slug (must be unique)
-        expiration_date: Optional expiration date
+        expires_at: Optional expiration date
         max_retries: Maximum retries for slug collision (default: 3)
         
     Returns:
@@ -67,7 +67,7 @@ def create_short_url(
         return existing
     
     # Validate and set expiration date
-    if expiration_date:
+    if expires_at:
         if expiration_date <= datetime.utcnow():
             raise ValueError("Expiration date must be in the future")
         
@@ -89,7 +89,7 @@ def create_short_url(
             raise ValueError("Invalid custom slug format")
         
         # Check if custom slug is available
-        existing_slug = db.query(models.URL).filter(models.URL.short_url == custom_slug).first()
+        existing_slug = db.query(models.URL).filter(models.URL.slug == custom_slug).first()
         if existing_slug:
             raise ValueError(f"Custom slug '{custom_slug}' is already taken")
         
@@ -104,7 +104,7 @@ def create_short_url(
             
             # Check if slug is available
             existing_slug = db.query(models.URL).filter(
-                models.URL.short_url == candidate_slug
+                models.URL.slug == candidate_slug
             ).first()
             
             if not existing_slug:
@@ -119,9 +119,9 @@ def create_short_url(
     # Create URL record
     db_url = models.URL(
         target_url=normalized_url,
-        short_url=slug,
+        slug=slug,
         url_hash=url_hash,
-        expiration_date=expiration_date,
+        expires_at=expiration_date,
         active=True,
         created_at=datetime.utcnow()
     )
@@ -167,7 +167,7 @@ def get_url_by_short(db: Session, short_url: str, use_cache: bool = True) -> Opt
                 setattr(url, key, value)
             
             # Check if expired
-            if url.expiration_date and url.expiration_date < datetime.utcnow():
+            if url.expires_at and url.expires_at < datetime.utcnow():
                 cache_delete(cache_key)
                 return None
             
@@ -177,7 +177,7 @@ def get_url_by_short(db: Session, short_url: str, use_cache: bool = True) -> Opt
     
     # Cache miss or cache disabled - query database
     url = db.query(models.URL).filter(
-        models.URL.short_url == short_url,
+        models.URL.slug == short_url,
         models.URL.active == True
     ).first()
     
@@ -185,7 +185,7 @@ def get_url_by_short(db: Session, short_url: str, use_cache: bool = True) -> Opt
         return None
     
     # Check if expired
-    if url.expiration_date and url.expiration_date < datetime.utcnow():
+    if url.expires_at and url.expires_at < datetime.utcnow():
         return None
     
     # Cache the result
@@ -197,7 +197,7 @@ def get_url_by_short(db: Session, short_url: str, use_cache: bool = True) -> Opt
             'url_hash': url.url_hash,
             'clicks': url.clicks,
             'active': url.active,
-            'expiration_date': url.expiration_date.isoformat() if url.expiration_date else None,
+            'expiration_date': url.expires_at.isoformat() if url.expires_at else None,
             'created_at': url.created_at.isoformat() if url.created_at else None,
             'updated_at': url.updated_at.isoformat() if url.updated_at else None
         }
@@ -227,7 +227,7 @@ def update_url(
     db: Session,
     url_id: int,
     target_url: Optional[str] = None,
-    expiration_date: Optional[datetime] = None,
+    expires_at: Optional[datetime] = None,
     active: Optional[bool] = None
 ) -> Optional[models.URL]:
     """
@@ -237,7 +237,7 @@ def update_url(
         db: Database session
         url_id: ID of the URL to update
         target_url: New target URL (optional)
-        expiration_date: New expiration date (optional)
+        expires_at: New expiration date (optional)
         active: New active status (optional)
         
     Returns:
@@ -257,10 +257,10 @@ def update_url(
         url.target_url = normalized_url
         url.url_hash = get_url_hash(normalized_url)
     
-    if expiration_date is not None:
-        if expiration_date <= datetime.utcnow():
+    if expires_at is not None:
+        if expires_at <= datetime.utcnow():
             raise ValueError("Expiration date must be in the future")
-        url.expiration_date = expiration_date
+        url.expires_at = expires_at
     
     if active is not None:
         url.active = active
