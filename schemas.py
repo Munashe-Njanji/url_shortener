@@ -73,8 +73,11 @@ class URLCreate(BaseModel):
     @validator('expiration_date')
     def validate_expiration_date(cls, v):
         """Validate that expiration date is in the future."""
-        if v is not None:
-            if v <= datetime.utcnow():
+        if v is None:
+            return v
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+            if v <= datetime.now(timezone.utc):
                 raise ValueError('Expiration date must be in the future')
         return v
 
@@ -121,7 +124,11 @@ class URLUpdate(BaseModel):
     @validator('target_url')
     def validate_target_url(cls, v):
         """Validate target URL if provided."""
-        if v is not None:
+        if v is None:
+            return v
+        # Make timezone-aware if naive (assume UTC)
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            v = v.replace(tzinfo=timezone.utc)
             if not v.strip():
                 raise ValueError('Target URL cannot be empty')
             if not v.startswith(('http://', 'https://')):
@@ -156,3 +163,33 @@ class HealthCheckResponse(BaseModel):
             "celery": True
         }
     )
+
+
+# Authentication Schemas
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    email_verified: bool
+    tier: str
+    created_at: datetime
+    last_login_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: UserResponse

@@ -2,10 +2,27 @@
 Database models for URL shortener.
 Now using PostgreSQL 'links' table with backward compatibility.
 """
-from sqlalchemy import Column, BigInteger, String, DateTime, Boolean, Text
+from sqlalchemy import Column, BigInteger, Integer, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from database import Base
+
+
+class User(Base):
+    """User model for authentication and authorization."""
+    __tablename__ = "users"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    last_login_at = Column(DateTime, nullable=True)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    account_locked_until = Column(DateTime, nullable=True)
+    tier = Column(String(50), default='free', nullable=False)
 
 
 class URL(Base):

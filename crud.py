@@ -68,10 +68,9 @@ def create_short_url(
     
     # Validate and set expiration date
     if expires_at:
-        if expiration_date <= datetime.utcnow():
-            raise ValueError("Expiration date must be in the future")
-        
-        max_expiration = datetime.utcnow() + timedelta(days=settings.MAX_EXPIRATION_DAYS)
+        expiration_date = expires_at
+        # Validation is already done in schemas.py, just check max limit
+        max_expiration = datetime.now(timezone.utc) + timedelta(days=settings.MAX_EXPIRATION_DAYS)
         if expiration_date > max_expiration:
             raise ValueError(
                 f"Expiration date cannot exceed {settings.MAX_EXPIRATION_DAYS} days"

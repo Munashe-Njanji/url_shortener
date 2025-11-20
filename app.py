@@ -5,6 +5,7 @@ Implements proper error handling, validation, and CORS.
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional
@@ -14,8 +15,11 @@ import time
 
 import models
 import crud
+import auth_crud
 import database
 import schemas
+from auth import create_access_token, create_refresh_token, verify_token, is_token_expired
+from dependencies import get_current_user, get_current_verified_user, get_optional_user
 from config import settings
 from rate_limiter import check_rate_limit_ip
 from redis_client import get_redis_client
@@ -50,6 +54,8 @@ app.add_middleware(
     max_age=3600
 )
 
+# Authentication routes are defined inline below
+
 
 # Security headers middleware
 @app.middleware("http")
@@ -75,6 +81,45 @@ async def add_request_id(request: Request, call_next):
 
 
 # Custom exception handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle Pydantic validation errors with user-friendly messages."""
+    errors = []
+    for error in exc.errors():
+        field = " -> ".join(str(loc) for loc in error["loc"] if loc != "body")
+        message = error["msg"]
+        error_type = error["type"]
+        
+        # Provide more user-friendly messages
+        if "missing" in error_type:
+            user_message = f"Required field '{field}' is missing"
+        elif "type_error" in error_type:
+            user_message = f"Invalid type for field '{field}': {message}"
+        elif "value_error" in error_type:
+            user_message = f"Invalid value for field '{field}': {message}"
+        else:
+            user_message = f"Validation error in field '{field}': {message}"
+        
+        errors.append({
+            "field": field,
+            "message": user_message,
+            "type": error_type
+        })
+    
+    logger.warning(f"Validation error: {errors}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "The request contains invalid data. Please check the errors below.",
+                "errors": errors,
+                "request_id": getattr(request.state, "request_id", None)
+            }
+        }
+    )
+
+
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError):
     """Handle ValueError exceptions with proper error response."""
@@ -90,19 +135,55 @@ async def value_error_handler(request: Request, exc: ValueError):
     )
 
 
+@app.exception_handler(TypeError)
+async def type_error_handler(request: Request, exc: TypeError):
+    """Handle TypeError exceptions (often from validation issues)."""
+    error_msg = str(exc)
+    
+    # Provide user-friendly messages for common type errors
+    if "datetime" in error_msg.lower():
+        user_message = "Invalid date format. Please provide a valid ISO 8601 datetime (e.g., 2024-12-31T23:59:59Z)"
+    else:
+        user_message = "Invalid data type provided. Please check your request format."
+    
+    logger.warning(f"Type error: {error_msg}")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "error": {
+                "code": "INVALID_DATA_TYPE",
+                "message": user_message,
+                "details": error_msg if settings.DEBUG else None,
+                "request_id": getattr(request.state, "request_id", None)
+            }
+        }
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle unexpected exceptions."""
     logger.error(f"Unexpected error: {str(exc)}", exc_info=True)
+    
+    # Provide more helpful error messages in development
+    error_details = {
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected error occurred. Please try again or contact support if the problem persists.",
+            "request_id": getattr(request.state, "request_id", None)
+        }
+    }
+    
+    # Include exception details in debug mode
+    if settings.DEBUG:
+        error_details["error"]["debug_info"] = {
+            "exception_type": type(exc).__name__,
+            "exception_message": str(exc)
+        }
+    
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "request_id": getattr(request.state, "request_id", None)
-            }
-        }
+        content=error_details
     )
 
 
@@ -146,6 +227,86 @@ async def health_check(db: Session = Depends(database.get_db)):
             "checks": checks
         }
     )
+
+
+# Authentication endpoints
+@app.post(
+    "/api/v1/auth/register",
+    response_model=schemas.TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Authentication"],
+    summary="Register a new user"
+)
+async def register(
+    user_data: schemas.UserCreate,
+    db: Session = Depends(database.get_db)
+):
+    """Register a new user account."""
+    try:
+        user = auth_crud.create_user(db, user_data)
+        access_token = create_access_token(data={"sub": str(user.id)})
+        refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        
+        logger.info(f"User registered: {user.email} (ID: {user.id})")
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "user": user
+        }
+    except ValueError as e:
+        logger.warning(f"Registration failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post(
+    "/api/v1/auth/login",
+    response_model=schemas.TokenResponse,
+    tags=["Authentication"],
+    summary="Login user"
+)
+async def login(
+    user_data: schemas.UserLogin,
+    db: Session = Depends(database.get_db)
+):
+    """Authenticate user and return JWT tokens."""
+    user = auth_crud.authenticate_user(db, user_data.email, user_data.password)
+    
+    if not user:
+        logger.warning(f"Failed login attempt for: {user_data.email}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+    
+    if auth_crud.is_user_account_locked(db, user.id):
+        logger.warning(f"Login attempt on locked account: {user.email}")
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked")
+    
+    access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    
+    logger.info(f"User logged in: {user.email} (ID: {user.id})")
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "user": user
+    }
+
+
+@app.get(
+    "/api/v1/auth/me",
+    response_model=schemas.UserResponse,
+    tags=["Authentication"],
+    summary="Get current user info"
+)
+async def get_current_user_info(
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get current authenticated user information."""
+    return current_user
 
 
 # API endpoints

@@ -6,7 +6,7 @@ pydantic-settings==2.5.2
 
 # Database
 SQLAlchemy==2.0.35
-psycopg2-binary==2.9.9  # PostgreSQL driver
+psycopg[binary]==3.2.3  # PostgreSQL driver (newer version, better for Python 3.13)
 alembic==1.13.1  # Database migrations
 
 # Caching and Task Queue
@@ -25,6 +25,8 @@ requests==2.32.3  # For sync HTTP requests
 # Utilities
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1  # Environment variable loading
+psycopg2
+email-validator
 
 # Monitoring and Logging
 prometheus-client==0.20.0  # Metrics
